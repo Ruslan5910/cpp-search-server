@@ -95,8 +95,6 @@ public:
         : SearchServer(SplitIntoWords(stop_words_text)) 
     {
     }
-    
-    inline static constexpr int INVALID_DOCUMENT_ID = -1;
 
     void AddDocument(int document_id, const string& document, DocumentStatus status, const vector<int>& ratings) {
         if (document_id < 0) {
@@ -104,9 +102,6 @@ public:
         }
         if (documents_.count(document_id)) {
             throw invalid_argument("Документ с таким id уже содержится"s);
-        }
-        if (CheckControlCodes(document)) {
-            throw invalid_argument("Использованы недопустимые символы в тексте добавляемого документа"s);
         }
         const vector<string> words = SplitIntoWordsNoStop(document);
         const double inv_word_count = 1.0 / words.size();
@@ -122,14 +117,6 @@ public:
         
         if (CheckControlCodes(raw_query)) {
             throw invalid_argument("Запрос содержит недопустимые символы"s);
-        }
-        
-        if (CheckMinusWithoutWord(raw_query)) {
-            throw invalid_argument("В поисковом запросе использован символ минус без слова"s);
-        }
-        
-        if (CheckDoubleMinus(raw_query)) {
-            throw invalid_argument("В слове поискового запроса содеражся два минуса"s);
         }
         
         const Query query = ParseQuery(raw_query);
@@ -167,20 +154,13 @@ public:
         if (number < 0 || number >= documents_.size()) {
             throw out_of_range("Индекс переданного документа выходит за пределы допустимого диапазона"s);
         }
-        return ids_[number];
+        return ids_.at(number);
     }
 
     tuple<vector<string>, DocumentStatus> MatchDocument(const string& raw_query, int document_id) const {
+        
         if (CheckControlCodes(raw_query)) {
             throw invalid_argument("Запрос содержит недопустимые символы"s);
-        }
-        
-        if (CheckMinusWithoutWord(raw_query)) {
-            throw invalid_argument("В поисковом запросе использован символ минус без слова"s);
-        }
-        
-        if (CheckDoubleMinus(raw_query)) {
-            throw invalid_argument("В слове поискового запроса содеражся два минуса"s);
         }
         
         const Query query = ParseQuery(raw_query);
@@ -222,6 +202,9 @@ private:
     vector<string> SplitIntoWordsNoStop(const string& text) const {
         vector<string> words;
         for (const string& word : SplitIntoWords(text)) {
+            if (CheckControlCodes(text)) {
+                throw invalid_argument("Использованы недопустимые символы в тексте добавляемого документа"s);
+            }
             if (!IsStopWord(word)) {
                 words.push_back(word);
             }
@@ -263,7 +246,15 @@ private:
 
     Query ParseQuery(const string& text) const {
         Query query;
+        bool CheckDoubleMinus = false;
+        bool CheckMinusWithoutWord = false;
         for (const string& word : SplitIntoWords(text)) {
+            if (word == "-"s) {
+                CheckMinusWithoutWord = true;
+            }
+            if (word[0] == '-' && word[1] == '-') {
+                CheckDoubleMinus = true;
+            }
             const QueryWord query_word = ParseQueryWord(word);
             if (!query_word.is_stop) {
                 if (query_word.is_minus) {
@@ -272,6 +263,13 @@ private:
                     query.plus_words.insert(query_word.data);
                 }
             }
+        }
+        if (CheckMinusWithoutWord == true) {
+            throw invalid_argument("В поисковом запросе использован символ минус без слова"s);
+        }
+        
+        if (CheckDoubleMinus == true) {
+            throw invalid_argument("В слове поискового запроса содеражся два минуса"s);
         }
         return query;
     }
@@ -315,29 +313,8 @@ private:
     }
     
     static bool CheckControlCodes(const string& text) {
-        for (const char c : text) {
-            if (c >= '\0' && c < ' ') {
-                return true;
-            }
-        }
-        return false;
-    }
-    
-    bool CheckMinusWithoutWord(const string& text) const {
-        for (const string& word : SplitIntoWords(text)) {
-            if (word == "-"s) {
-                return true;
-            }
-        }
-        return false;
-    }
-    
-    bool CheckDoubleMinus(const string& text) const {
-        for (const string& word : SplitIntoWords(text)) {
-            if (word[0] == '-' && word[1] == '-') {
-                return true;
-            }
-        }
-        return false;
+        return any_of(text.begin(), text.end(), [](char c) {
+        return c >= '\0' && c < ' ';
+    });
     }
 };
