@@ -2,15 +2,16 @@
 #include <cmath>
 #include <iostream>
 #include <map>
+#include <numeric>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
-#include <optional>
 
 using namespace std;
 
 const int MAX_RESULT_DOCUMENT_COUNT = 5;
+const double EPSILON = 1e-6;
 
 string ReadLine() {
     string s;
@@ -86,7 +87,7 @@ public:
         : stop_words_(MakeUniqueNonEmptyStrings(stop_words)) {
             for (const string& word : stop_words) {
                 if (CheckControlCodes(word)) {
-                    throw invalid_argument("Стоп-слово содержит недопустимые символы");
+                    throw invalid_argument("Стоп-слово содержит недопустимые символы"s);
                 }
             }
     }    
@@ -114,21 +115,15 @@ public:
 
     template <typename DocumentPredicate>
     vector<Document> FindTopDocuments(const string& raw_query, DocumentPredicate document_predicate) const {
-        
-        if (CheckControlCodes(raw_query)) {
-            throw invalid_argument("Запрос содержит недопустимые символы"s);
-        }
-        
         const Query query = ParseQuery(raw_query);
         auto matched_documents = FindAllDocuments(query, document_predicate);
 
         sort(matched_documents.begin(), matched_documents.end(),
              [](const Document& lhs, const Document& rhs) {
-                 if (abs(lhs.relevance - rhs.relevance) < 1e-6) {
+                 if (abs(lhs.relevance - rhs.relevance) < EPSILON) {
                      return lhs.rating > rhs.rating;
-                 } else {
-                     return lhs.relevance > rhs.relevance;
                  }
+                 return lhs.relevance > rhs.relevance;
              });
         if (matched_documents.size() > MAX_RESULT_DOCUMENT_COUNT) {
             matched_documents.resize(MAX_RESULT_DOCUMENT_COUNT);
@@ -151,18 +146,10 @@ public:
     }
     
     int GetDocumentId(int number) const {
-        if (number < 0 || number >= documents_.size()) {
-            throw out_of_range("Индекс переданного документа выходит за пределы допустимого диапазона"s);
-        }
         return ids_.at(number);
     }
 
-    tuple<vector<string>, DocumentStatus> MatchDocument(const string& raw_query, int document_id) const {
-        
-        if (CheckControlCodes(raw_query)) {
-            throw invalid_argument("Запрос содержит недопустимые символы"s);
-        }
-        
+    tuple<vector<string>, DocumentStatus> MatchDocument(const string& raw_query, int document_id) const {  
         const Query query = ParseQuery(raw_query);
         vector<string> matched_words;
         for (const string& word : query.plus_words) {
@@ -216,11 +203,7 @@ private:
         if (ratings.empty()) {
             return 0;
         }
-        int rating_sum = 0;
-        for (const int rating : ratings) {
-            rating_sum += rating;
-        }
-        return rating_sum / static_cast<int>(ratings.size());
+        return accumulate(ratings.begin(), ratings.end(), 0) / static_cast<int>(ratings.size());
     }
 
     struct QueryWord {
@@ -229,10 +212,19 @@ private:
         bool is_stop;
     };
 
-    QueryWord ParseQueryWord(string text) const {
+    QueryWord ParseQueryWord(string text) const { 
+        if (CheckControlCodes(text)) {
+           throw invalid_argument("Запрос содержит недопустимые символы"s);
+        }
+        if (text == "-"s) {
+            throw invalid_argument("Запрос содержит минус без слова"s);
+        }
+        
         bool is_minus = false;
-        // Word shouldn't be empty
         if (text[0] == '-') {
+            if (text[1] == '-') {
+                throw invalid_argument("Запрос содержит двойной минус"s);
+            }
             is_minus = true;
             text = text.substr(1);
         }
@@ -246,15 +238,7 @@ private:
 
     Query ParseQuery(const string& text) const {
         Query query;
-        bool CheckDoubleMinus = false;
-        bool CheckMinusWithoutWord = false;
         for (const string& word : SplitIntoWords(text)) {
-            if (word == "-"s) {
-                CheckMinusWithoutWord = true;
-            }
-            if (word[0] == '-' && word[1] == '-') {
-                CheckDoubleMinus = true;
-            }
             const QueryWord query_word = ParseQueryWord(word);
             if (!query_word.is_stop) {
                 if (query_word.is_minus) {
@@ -264,17 +248,9 @@ private:
                 }
             }
         }
-        if (CheckMinusWithoutWord == true) {
-            throw invalid_argument("В поисковом запросе использован символ минус без слова"s);
-        }
-        
-        if (CheckDoubleMinus == true) {
-            throw invalid_argument("В слове поискового запроса содеражся два минуса"s);
-        }
         return query;
     }
 
-    // Existence required
     double ComputeWordInverseDocumentFreq(const string& word) const {
         return log(GetDocumentCount() * 1.0 / word_to_document_freqs_.at(word).size());
     }
@@ -314,7 +290,7 @@ private:
     
     static bool CheckControlCodes(const string& text) {
         return any_of(text.begin(), text.end(), [](char c) {
-        return c >= '\0' && c < ' ';
-    });
+                                                    return c >= '\0' && c < ' ';
+                                                });
     }
 };
